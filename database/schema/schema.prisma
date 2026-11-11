@@ -1,0 +1,287 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Aether API Studio — database schema (Prisma ORM 7)
+//
+// • Connection URL lives in backend/prisma.config.ts (Prisma 7 no longer reads
+//   it from this file). Default provider: SQLite via the better-sqlite3 driver
+//   adapter. See docs/ARCHITECTURE.md → "Chuyển sang PostgreSQL" to switch.
+// • Migrations: database/migrations   • Seed: database/seed/seed.ts
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../../backend/src/generated/prisma"
+  runtime             = "nodejs"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum ThemePreference {
+  DARK
+  LIGHT
+  SYSTEM
+}
+
+enum HttpMethod {
+  GET
+  POST
+  PUT
+  PATCH
+  DELETE
+  HEAD
+  OPTIONS
+}
+
+enum BodyType {
+  NONE
+  JSON
+  RAW
+}
+
+enum AuthType {
+  NONE
+  BEARER
+  BASIC
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+}
+
+// ─── Identity & access ───────────────────────────────────────────────────────
+
+model User {
+  id               Int       @id @default(autoincrement())
+  email            String    @unique
+  name             String
+  passwordHash     String
+  role             Role      @default(USER)
+  avatarUrl        String?
+  bio              String?
+  isActive         Boolean   @default(true)
+  lastLoginAt      DateTime?
+  /// Consecutive failed sign-ins; the account locks temporarily after LOGIN_MAX_ATTEMPTS.
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  settings       UserSettings?
+  refreshTokens  RefreshToken[]
+  products       Product[]
+  collections    Collection[]
+  savedRequests  SavedRequest[]
+  requestHistory RequestHistory[]
+  environments   Environment[]
+  notifications  Notification[]
+
+  @@map("users")
+}
+
+model UserSettings {
+  userId               Int             @id
+  theme                ThemePreference @default(DARK)
+  enable3dEffects      Boolean         @default(true)
+  reducedMotion        Boolean         @default(false)
+  requestTimeoutMs     Int             @default(30000)
+  notificationsEnabled Boolean         @default(true)
+  updatedAt            DateTime        @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+/// Refresh tokens are stored hashed (SHA-256) and rotated on every use.
+/// `family` groups a rotation chain so a reused token can revoke the whole chain.
+model RefreshToken {
+  id           String    @id @default(cuid())
+  tokenHash    String    @unique
+  family       String
+  userId       Int
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  userAgent    String?
+  ipAddress    String?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([family])
+  @@map("refresh_tokens")
+}
+
+// ─── Demo REST resource ──────────────────────────────────────────────────────
+
+model Product {
+  id          Int      @id @default(autoincrement())
+  name        String
+  slug        String   @unique
+  description String?
+  price       Float
+  currency    String   @default("USD")
+  stock       Int      @default(0)
+  category    String
+  imageUrl    String?
+  rating      Float    @default(0)
+  isActive    Boolean  @default(true)
+  createdById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([category])
+  @@index([createdById])
+  @@map("products")
+}
+
+// ─── API Tester workspace ────────────────────────────────────────────────────
+
+model Collection {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  ownerId     Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner    User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  requests SavedRequest[]
+
+  @@unique([ownerId, name])
+  @@map("collections")
+}
+
+/// `headers` / `queryParams` hold `{ key, value, enabled }[]`;
+/// `auth` holds `{ token }` (BEARER) or `{ username, password }` (BASIC).
+model SavedRequest {
+  id           String     @id @default(cuid())
+  name         String
+  description  String?
+  method       HttpMethod
+  url          String
+  headers      Json
+  queryParams  Json
+  bodyType     BodyType   @default(NONE)
+  body         String?
+  authType     AuthType   @default(NONE)
+  auth         Json?
+  sortOrder    Int        @default(0)
+  ownerId      Int
+  collectionId String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  owner      User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  collection Collection? @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId])
+  @@index([collectionId])
+  @@map("saved_requests")
+}
+
+/// One row per request executed from the API Tester (powers history + dashboard).
+model RequestHistory {
+  id              String     @id @default(cuid())
+  userId          Int
+  method          HttpMethod
+  url             String
+  requestHeaders  Json?
+  bodyType        BodyType   @default(NONE)
+  requestBody     String?
+  statusCode      Int?
+  statusText      String?
+  durationMs      Int
+  responseSize    Int        @default(0)
+  responseHeaders Json?
+  responseBody    String?
+  errorMessage    String?
+  createdAt       DateTime   @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("request_history")
+}
+
+model Environment {
+  id        String   @id @default(cuid())
+  name      String
+  isActive  Boolean  @default(false)
+  ownerId   Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner     User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  variables EnvironmentVariable[]
+
+  @@unique([ownerId, name])
+  @@map("environments")
+}
+
+model EnvironmentVariable {
+  id            String  @id @default(cuid())
+  environmentId String
+  key           String
+  value         String
+  isSecret      Boolean @default(false)
+  enabled       Boolean @default(true)
+
+  environment Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  @@unique([environmentId, key])
+  @@map("environment_variables")
+}
+
+// ─── Platform ────────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    Int
+  type      NotificationType @default(INFO)
+  title     String
+  message   String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+/// Server-side traffic log written by the metrics middleware (batched).
+/// Deliberately has no foreign key: logs must never block user deletion.
+model ApiLog {
+  id         Int      @id @default(autoincrement())
+  method     String
+  path       String
+  route      String?
+  statusCode Int
+  durationMs Float
+  userId     Int?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([statusCode])
+  @@index([route])
+  @@map("api_logs")
+}

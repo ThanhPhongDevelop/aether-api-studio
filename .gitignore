@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Builds & caches
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.vite/
+.eslintcache
+
+# Environment — never commit real secrets
+.env
+.env.*
+!.env.example
+
+# Generated Prisma client
+backend/src/generated/
+
+# Local SQLite databases
+backend/data/*
+!backend/data/.gitkeep
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
